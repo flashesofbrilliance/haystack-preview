@@ -20,7 +20,7 @@ jobs:
         run: |
           mkdir haystack
           cd haystack
-          echo "<BASE64_ZIP_PAYLOAD>" | base64 -d > app.zip
+          echo "<BASE64_PAYLOAD>" | base64 -d > app.zip
           unzip app.zip
           rm app.zip
 
