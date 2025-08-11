@@ -1,0 +1,292 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Haystack — Preview</title>
+  <style>
+    :root{ --primary:#0b5fff; --bg:#f7fafc; --muted:#6b7280; --card:#ffffff; --border:#e6e9ef; }
+    *{box-sizing:border-box}
+    body{ font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial; background:var(--bg); margin:0; color:#111827; padding:16px;}
+    .app{ max-width:1180px; margin:0 auto;}
+    .panel{ background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; box-shadow:0 1px 3px rgba(16,24,40,0.03); margin-bottom:12px;}
+    .grid{ display:grid; grid-template-columns: 1fr 360px; gap:12px;}
+    .small{ font-size:12px; color:var(--muted); }
+    .btn{ padding:8px 12px; background:var(--primary); color:#fff; border-radius:6px; border:none; cursor:pointer;}
+    .btn.secondary{ background:#fff; color:var(--primary); border:1px solid var(--primary);}
+    .table{ width:100%; border-collapse:collapse; }
+    .table th,.table td{ padding:8px; border-bottom:1px solid #eef2f7; text-align:left; }
+    input[type="range"]{ width:100%; }
+    select,input[type="file"]{ width:100%; padding:8px; border:1px solid #e2e8f0; border-radius:6px;}
+    .bar{height:8px;background:#eef2f7;border-radius:4px;overflow:hidden}
+    .bar > span{display:block;height:8px;background:var(--primary);border-radius:4px}
+    .tag{display:inline-block;padding:2px 6px;border-radius:6px;background:#eef2ff;color:var(--primary);font-size:12px}
+    .row{display:grid;grid-template-columns:140px 1fr 40px;gap:8;align-items:center;margin-bottom:6px}
+    .hist{display:flex;gap:6px;align-items:flex-end;height:100px}
+    .hist .bin{width:20px;background:#eef2f7;border-radius:4px;position:relative}
+    .hist .bin > span{position:absolute;left:0;right:0;bottom:0;background:var(--primary);border-radius:4px}
+  </style>
+</head>
+<body>
+<div class="app" id="app">
+  <div class="panel" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+    <h2 style="margin:0">Haystack — Preview</h2>
+    <button class="btn" id="loadDemoBtn">Load demo data</button>
+  </div>
+
+  <div class="grid">
+    <div>
+      <div class="panel">
+        <h4>Signal ⇄ Noise</h4>
+        <div style="display:flex;gap:12px;align-items:center">
+          <input id="snr" type="range" min="0" max="100" value="35" style="flex:1" />
+          <div class="small"><span id="snrVal">35</span></div>
+        </div>
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn secondary" data-snr="15">Conservative</button>
+          <button class="btn secondary" data-snr="35">Balanced</button>
+          <button class="btn secondary" data-snr="80">Permissive</button>
+        </div>
+      </div>
+
+      <div class="panel" id="weightsPanel">
+        <h4>15 Factors</h4>
+        <div id="weightsRows"></div>
+      </div>
+
+      <div class="panel">
+        <h4>Connections</h4>
+        <input id="csvFile" type="file" accept=".csv" />
+        <div class="small" style="margin-top:6px">Tip: upload your LinkedIn <code>connections.csv</code> or press “Load demo data”.</div>
+      </div>
+
+      <div class="panel">
+        <h4>Filters</h4>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div>
+            <label class="small">Category</label>
+            <select id="category">
+              <option value="">All</option>
+              <option value="fintech">Fintech</option>
+              <option value="defi">DeFi</option>
+              <option value="blockchain-infra">Blockchain Infra</option>
+              <option value="vc">VC</option>
+              <option value="talent-network">Talent Network</option>
+            </select>
+          </div>
+          <div>
+            <label class="small">Sort by</label>
+            <select id="sortBy">
+              <option value="match">Match</option>
+              <option value="alpha">Alphabetical</option>
+              <option value="connections"># Connections</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h4>Results</h4>
+        <table class="table" id="resultsTable">
+          <thead><tr><th>Company</th><th>Category</th><th>Match %</th><th>Base</th><th>Boost</th><th>#Conns</th></tr></thead>
+          <tbody id="resultsBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel">
+        <h4>Pipeline Funnel</h4>
+        <div id="funnel"></div>
+      </div>
+      <div class="panel">
+        <h4>Match Distribution</h4>
+        <div class="hist" id="hist"></div>
+        <div class="small" style="margin-top:6px">Binned by 10s (0–100).</div>
+      </div>
+      <div class="panel" id="summary">
+        <h4>Summary</h4>
+        <div class="small" id="summaryText"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const factorNames = ['Culture','Compensation','Skills Match','Vibes','Industry Fit','Growth','Leadership','Team','Innovation','WLB','Mission','Learning','Stability','Geography','Tech Stack'];
+let SNR = 35;
+let WEIGHTS = [6,7,8,5,7, 6,6,6,7,6, 7,6,6,5,7];
+let CONNECTIONS = [];
+const CATALOG = [
+  // fintech
+  {name:'Stripe',category:'fintech',aliases:['Stripe Payments']},
+  {name:'Plaid',category:'fintech'},
+  {name:'Revolut',category:'fintech'},
+  {name:'Brex',category:'fintech'},
+  {name:'Ramp',category:'fintech'},
+  {name:'Adyen',category:'fintech'},
+  {name:'Nubank',category:'fintech'},
+  {name:'SoFi',category:'fintech'},
+  {name:'Affirm',category:'fintech'},
+  {name:'Robinhood',category:'fintech'},
+  // defi
+  {name:'Uniswap',category:'defi',aliases:['UNI','Uniswap Protocol']},
+  {name:'Aave',category:'defi'},
+  {name:'MakerDAO',category:'defi',aliases:['Maker','DAI']},
+  {name:'Curve',category:'defi',aliases:['Curve Finance']},
+  {name:'Lido',category:'defi',aliases:['Lido DAO']},
+  {name:'Compound',category:'defi'},
+  {name:'Synthetix',category:'defi'},
+  {name:'dYdX',category:'defi',aliases:['dYdX Protocol']},
+  // infra
+  {name:'Coinbase',category:'blockchain-infra'},
+  {name:'ConsenSys',category:'blockchain-infra',aliases:['Consensys']},
+  {name:'Chainalysis',category:'blockchain-infra'},
+  {name:'Alchemy',category:'blockchain-infra'},
+  {name:'Infura',category:'blockchain-infra'},
+  {name:'Ledger',category:'blockchain-infra'},
+  {name:'Fireblocks',category:'blockchain-infra'},
+  {name:'Circle',category:'blockchain-infra',aliases:['Circle Internet Financial']},
+  // vc
+  {name:'Andreessen Horowitz',category:'vc',aliases:['a16z']},
+  {name:'Paradigm',category:'vc'},
+  {name:'Sequoia Capital',category:'vc',aliases:['Sequoia']},
+  {name:'Polychain Capital',category:'vc'},
+  {name:'Pantera Capital',category:'vc'},
+  {name:'Union Square Ventures',category:'vc',aliases:['USV']},
+  // talent networks
+  {name:'Braintrust',category:'talent-network'},
+  {name:'Crypto Talent DAO',category:'talent-network'},
+  {name:'Gitcoin',category:'talent-network'},
+  {name:'Bankless DAO',category:'talent-network'},
+  {name:'Developer DAO',category:'talent-network'}
+];
+
+// deterministic features
+function hash01(s){ let h=2166136261>>>0; for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619);} return (h>>>0)/0xFFFFFFFF; }
+function featuresFor(name){
+  const out=[]; let seed=hash01(name);
+  for(let i=0;i<15;i++){ seed=(seed*9301+49297)%233280; out.push((seed%1000)/1000); }
+  return out;
+}
+function mapSNR(snr){
+  const clamp=(n,min,max)=>Math.max(min,Math.min(max,n));
+  snr=clamp(snr,0,100);
+  return { referralSensitivity:0.05+(snr/100)*0.35 };
+}
+function computeMatches(dataset){
+  const { referralSensitivity } = mapSNR(SNR);
+  const cat=document.getElementById('category').value;
+  const sortBy=document.getElementById('sortBy').value;
+  const filtered = dataset.filter(d=>!cat || d.category===cat);
+  const results = filtered.map(c=>{
+    const f = featuresFor(c.name);
+    const contrib = f.map((v,i)=> v * (WEIGHTS[i]||0));
+    const baseRaw = contrib.reduce((s,v)=>s+v,0);
+    const maxScore = WEIGHTS.reduce((s,w)=>s+w,0)||1;
+    const base = (baseRaw / maxScore) * 100;
+    const names=[c.name].concat(c.aliases||[]).map(x=>x.toLowerCase());
+    const matched = CONNECTIONS.filter(row=>{
+      const co=(row.Company||'').toString().toLowerCase();
+      return names.includes(co);
+    });
+    const boost = Math.min(0.4, matched.length * (0.08 * (0.5 + referralSensitivity)));
+    const score = Math.min(100, base*(1+boost));
+    return { company:c.name, category:c.category, base, boost, score, connections:matched };
+  });
+  if (sortBy==='alpha') results.sort((a,b)=>a.company.localeCompare(b.company));
+  else if (sortBy==='connections') results.sort((a,b)=>b.connections.length - a.connections.length);
+  else results.sort((a,b)=>b.score-a.score);
+  return results;
+}
+function render(){
+  document.getElementById('snrVal').textContent=String(SNR);
+  const res = computeMatches(CATALOG);
+  const tbody=document.getElementById('resultsBody');
+  tbody.innerHTML='';
+  res.forEach(r=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML = `<td>${r.company}</td><td>${r.category}</td><td>${r.score.toFixed(1)}</td><td>${r.base.toFixed(1)}</td><td>${(r.boost*100).toFixed(0)}%</td><td>${r.connections.length}</td>`;
+    tbody.appendChild(tr);
+  });
+  document.getElementById('summaryText').textContent =
+    `Catalog: ${CATALOG.length} • Connections: ${CONNECTIONS.length} • Top match: ${res[0]?.company||'—'}`;
+  const top = Math.min(25, res.length);
+  const intros = Math.round(top*0.6);
+  const calls = Math.round(intros*0.5);
+  const adv = Math.round(calls*0.5);
+  const stages=[['Top 25 Matches',top],['Warm Intros (est.)',intros],['Calls (est.)',calls],['Advanced (est.)',adv]];
+  const max = Math.max(...stages.map(s=>s[1]),1);
+  const funnel=document.getElementById('funnel'); funnel.innerHTML='';
+  stages.forEach(([label,val])=>{
+    const wrap=document.createElement('div'); wrap.style.marginBottom='8px';
+    wrap.innerHTML = `<div class="small" style="margin-bottom:4px">${label} — ${val}</div>
+      <div class="bar"><span style="width:${(val/max)*100}%"></span></div>`;
+    funnel.appendChild(wrap);
+  });
+  const hist=document.getElementById('hist'); hist.innerHTML='';
+  const bins=new Array(10).fill(0);
+  res.forEach(r=>{ const idx=Math.min(9,Math.max(0,Math.floor(r.score/10))); bins[idx]++; });
+  const maxBin=Math.max(...bins,1);
+  bins.forEach((b,i)=>{
+    const bin=document.createElement('div'); bin.className='bin';
+    bin.title = `${i*10}-${i*10+9}: ${b}`;
+    const fill=document.createElement('span'); fill.style.height = `${(b/maxBin)*100}%`;
+    bin.appendChild(fill); hist.appendChild(bin);
+  });
+}
+function csvToRows(text){
+  const lines=text.trim().split('\n');
+  const headers=lines.shift().split(',');
+  return lines.map(line=>{
+    const cols=line.split(',');
+    const o={}; headers.forEach((h,i)=>o[h.trim()]=cols[i]);
+    return o;
+  });
+}
+(function init(){
+  const rows=document.getElementById('weightsRows');
+  rows.innerHTML='';
+  factorNames.forEach((n,i)=>{
+    const row=document.createElement('div'); row.className='row';
+    row.innerHTML = `
+      <div class="small">${n}</div>
+      <input type="range" min="0" max="10" value="${WEIGHTS[i]||0}" data-idx="${i}">
+      <div class="small" id="wval-${i}">${WEIGHTS[i]||0}</div>`;
+    rows.appendChild(row);
+  });
+  rows.addEventListener('input', (e)=>{
+    const t=e.target; if(t && t.matches('input[type="range"]')){
+      const i=Number(t.getAttribute('data-idx')); const v=Number(t.value);
+      WEIGHTS[i]=v; document.getElementById('wval-'+i).textContent=String(v); render();
+    }
+  });
+  const snr=document.getElementById('snr');
+  snr.addEventListener('input', e=>{ SNR=Number(e.target.value); document.getElementById('snrVal').textContent=e.target.value; render(); });
+  document.querySelectorAll('[data-snr]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{ SNR=Number(btn.getAttribute('data-snr')); snr.value=String(SNR); document.getElementById('snrVal').textContent=String(SNR); render(); })
+  });
+  document.getElementById('csvFile').addEventListener('change', async e=>{
+    const f=e.target.files?.[0]; if(!f) return;
+    const text=await f.text();
+    CONNECTIONS = csvToRows(text);
+    render();
+    e.target.value='';
+  });
+  document.getElementById('loadDemoBtn').addEventListener('click', ()=>{
+    CONNECTIONS = [
+      {Company: 'Stripe'},
+      {Company: 'Plaid'},
+      {Company: 'Uniswap'},
+      {Company: 'Coinbase'},
+      {Company: 'Andreessen Horowitz'},
+      {Company: 'Braintrust'},
+      {Company: 'Developer DAO'}
+    ];
+    render();
+  });
+  render();
+})();
+</script>
+</body>
+</html>
